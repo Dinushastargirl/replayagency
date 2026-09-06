@@ -17,7 +17,8 @@ const CARDS = [
   { id: "card-8", img: "/hero-pasture.jpg",      label: "Market Clarity",       tag: "DIGITAL"   },
 ];
 
-const ALL_CARDS = [...CARDS, ...CARDS, ...CARDS];
+// 5 copies — enough to fill any viewport with seamless wrap
+const ALL_CARDS = [...CARDS, ...CARDS, ...CARDS, ...CARDS, ...CARDS];
 
 const CARD_WIDTH  = 200;
 const CARD_HEIGHT = 280;
@@ -146,12 +147,17 @@ export function PastureHero() {
   }, []);
 
   // Compute visible card positions
+  // Anchor startX two full-sets to the LEFT of the viewport.
+  // As offset grows 0 → TOTAL_WIDTH the second set scrolls across the
+  // viewport, then the wrap subtracts TOTAL_WIDTH and the cycle repeats
+  // with zero visible jump because the surrounding copies fill the gap.
   const getCardPositions = () => {
     const W = containerRef.current?.clientWidth ?? 1440;
-    const startX = (W - TOTAL_WIDTH) / 2;
+    const startX = -TOTAL_WIDTH * 2;
     return ALL_CARDS.flatMap((card, i) => {
       const left = startX + i * CARD_STRIDE + offset;
-      return left > -CARD_WIDTH - 60 && left < W + 60 ? [{ card, left }] : [];
+      // render cards slightly beyond both edges so there's never a bare strip
+      return left > -CARD_WIDTH - 80 && left < W + 80 ? [{ card, left }] : [];
     });
   };
 
