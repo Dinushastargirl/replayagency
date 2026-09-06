@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --canvas: #F7F6F2;
+  --surface: #ECEAE2;
+  --primary: #1F2B1E;
+  --secondary: #2D3D2B;
+  --muted: #6B7A68;
+  --border: rgba(31, 43, 30, 0.12);
+}
+
+html {
+  background-color: var(--canvas);
+  color: var(--primary);
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--canvas);
+  color: var(--primary);
+  overflow-x: clip;
+  min-height: 100vh;
+  selection-background-color: #1F2B1E;
+  selection-color: #F7F6F2;
+}
+
+::selection {
+  background: #1F2B1E;
+  color: #F7F6F2;
+}
+
+/* Mask reveal utility */
+.mask-line {
+  overflow: hidden;
+  display: block;
+}
+
+.mask-content {
+  display: inline-block;
+  will-change: transform;
+}
+
+/* Subtle architectural grid pattern */
+.bg-grid-subtle {
+  background-size: 40px 40px;
+  background-image: 
+    linear-gradient(to right, rgba(31, 43, 30, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(31, 43, 30, 0.03) 1px, transparent 1px);
+}
