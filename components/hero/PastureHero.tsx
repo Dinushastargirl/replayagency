@@ -17,163 +17,136 @@ const CARDS = [
   { id: "card-8", img: "/hero-pasture.jpg",      label: "Market Clarity",       tag: "DIGITAL"   },
 ];
 
-// 5 copies — enough to fill any viewport with seamless wrap
-const ALL_CARDS = [...CARDS, ...CARDS, ...CARDS, ...CARDS, ...CARDS];
+// 16 persistent slots (2 full sets of 8) guarantees unbroken, continuous stream with zero gaps
+const M = 16;
+const SLOTS = Array.from({ length: M }, (_, i) => ({
+  slotIndex: i,
+  card: CARDS[i % CARDS.length],
+}));
 
-const CARD_WIDTH  = 200;
+const CARD_WIDTH = 200;
 const CARD_HEIGHT = 280;
-const GAP         = 18;
-const CARD_STRIDE = CARD_WIDTH + GAP;
-const TOTAL_WIDTH = CARDS.length * CARD_STRIDE;
-const SPEED       = 0.55;
-// How high the arc rises at centre (px) — bigger = stronger upward curve
-const ARC_HEIGHT  = 90;
-// Width of the arc spread (half‑width in px from beam centre)
-const ARC_SPREAD  = 680;
-
-// ─── Individual Card ───────────────────────────────────────────────────────────
-function GalleryCard({
-  card,
-  cardLeft,
-  beamX,
-}: {
-  card: (typeof CARDS)[0];
-  cardLeft: number;
-  beamX: number;
-}) {
-  const cardCenter = cardLeft + CARD_WIDTH / 2;
-  const dist       = cardCenter - beamX; // negative = left, positive = right
-
-  // ── Arc: parabola — centre cards highest, edges dip down
-  const normDist  = dist / ARC_SPREAD;                          // −1…+1 at edges
-  const arcY      = ARC_HEIGHT * normDist * normDist - ARC_HEIGHT; // 0 at centre, +ARC_HEIGHT at edges
-
-  // ── Colour reveal (left = B&W, right = colour)
-  const colourT = Math.min(1, Math.max(0, (dist + 120) / 240));
-
-  // ── 3D tilt toward beam
-  const rotateY = Math.max(-22, Math.min(22, dist * 0.065));
-
-  // ── Proximity scale
-  const proximity = Math.max(0, 1 - Math.abs(dist) / 340);
-  const scale     = 0.82 + proximity * 0.22;
-
-  // ── Z‑index: centre cards on top
-  const zIndex = Math.round(proximity * 12);
-
-  return (
-    <div
-      className="absolute top-0 overflow-hidden rounded-2xl shadow-2xl"
-      style={{
-        left:      cardLeft,
-        width:     CARD_WIDTH,
-        height:    CARD_HEIGHT,
-        transform: `perspective(900px) rotateY(${rotateY}deg) translateY(${arcY}px) scale(${scale})`,
-        transition:"transform 0.04s linear",
-        zIndex,
-      }}
-    >
-      {/* Photo */}
-      <div className="absolute inset-0">
-        <Image src={card.img} alt={card.label} fill className="object-cover object-center" sizes="200px" />
-      </div>
-
-      {/* Desaturation (B&W left of beam) */}
-      <div
-        className="absolute inset-0 bg-black mix-blend-color"
-        style={{ opacity: Math.max(0, 1 - colourT) * 0.97 }}
-      />
-
-      {/* Halftone dot matrix */}
-      <div
-        className="absolute inset-0"
-        style={{
-          opacity: Math.max(0, 1 - colourT) * 0.5,
-          backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.55) 1px, transparent 1px)",
-          backgroundSize:  "7px 7px",
-        }}
-      />
-
-      {/* Vignette */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/10" />
-
-      {/* Label */}
-      <div className="absolute bottom-0 left-0 right-0 p-3.5">
-        <div className="text-[9px] font-mono text-white/45 uppercase tracking-widest mb-0.5">{card.tag}</div>
-        <div className="text-[13px] font-semibold text-white leading-tight font-display">{card.label}</div>
-      </div>
-
-      {/* Beam glow edge on the card nearest beam */}
-      {Math.abs(dist) < 150 && (
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            background: `linear-gradient(${dist < 0 ? "270deg" : "90deg"}, transparent 60%, rgba(45,100,50,${0.22 * (1 - Math.abs(dist) / 150)}) 100%)`,
-          }}
-        />
-      )}
-    </div>
-  );
-}
+const CARD_STRIDE = 224;
+const TOTAL_WIDTH = M * CARD_STRIDE; // 3584px
+const X_MIN = -CARD_STRIDE * 2; // -448px (off-screen left buffer)
+const SPEED = 0.75; // Continuous smooth speed
+const BASE_Y = 24; // Baseline vertical position
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 export function PastureHero() {
-  const animRef      = useRef<number>(0);
-  const offsetRef    = useRef(0);
-  const [offset, setOffset] = useState(0);
-  const [beamX, setBeamX]   = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const offsetRef = useRef(0);
+  const [beamX, setBeamX] = useState(720);
 
-  // Centre beam on resize
+  // Resize handler for central beam
   useEffect(() => {
     const update = () => {
-      if (containerRef.current) setBeamX(containerRef.current.clientWidth / 2);
+      if (containerRef.current) {
+        setBeamX(containerRef.current.clientWidth / 2);
+      }
     };
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
   }, []);
 
-  // Auto-scroll loop — left → right
+  // ─── Truly Infinite Continuous Scroll Loop ───────────────────────────────────
   useEffect(() => {
-    const loop = () => {
-      offsetRef.current += SPEED;
-      if (offsetRef.current >= TOTAL_WIDTH) offsetRef.current -= TOTAL_WIDTH;
-      setOffset(offsetRef.current);
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(animRef.current);
-  }, []);
+    let animId: number;
+    let lastTime = performance.now();
 
-  // Compute visible card positions
-  // Anchor startX two full-sets to the LEFT of the viewport.
-  // As offset grows 0 → TOTAL_WIDTH the second set scrolls across the
-  // viewport, then the wrap subtracts TOTAL_WIDTH and the cycle repeats
-  // with zero visible jump because the surrounding copies fill the gap.
-  const getCardPositions = () => {
-    const W = containerRef.current?.clientWidth ?? 1440;
-    const startX = -TOTAL_WIDTH * 2;
-    return ALL_CARDS.flatMap((card, i) => {
-      const left = startX + i * CARD_STRIDE + offset;
-      // render cards slightly beyond both edges so there's never a bare strip
-      return left > -CARD_WIDTH - 80 && left < W + 80 ? [{ card, left }] : [];
-    });
-  };
+    const loop = (now: number) => {
+      const dt = Math.min((now - lastTime) / 1000, 0.1);
+      lastTime = now;
+
+      // Continuous offset (moves cards left -> right)
+      offsetRef.current = (offsetRef.current + SPEED * (dt * 60)) % TOTAL_WIDTH;
+
+      const W = containerRef.current?.clientWidth ?? 1440;
+      const bX = W / 2;
+
+      // Update all 16 slots directly on DOM (hardware accelerated translate3d, zero React re-render lag)
+      cardRefs.current.forEach((el, k) => {
+        if (!el) return;
+
+        // Modulo wrap: maps each card into [X_MIN, X_MIN + TOTAL_WIDTH)
+        let pos = (k * CARD_STRIDE + offsetRef.current - X_MIN) % TOTAL_WIDTH;
+        if (pos < 0) pos += TOTAL_WIDTH;
+        const left = pos + X_MIN;
+
+        // Hide cards that are far off-screen to save GPU
+        if (left < -CARD_WIDTH - 120 || left > W + 120) {
+          el.style.display = "none";
+          return;
+        }
+
+        el.style.display = "block";
+        const cardCenter = left + CARD_WIDTH / 2;
+        const dist = cardCenter - bX; // negative = left of beam, positive = right of beam
+
+        // 3D Parabola Arc: peak at center, gentle dip down at sides
+        const normDist = dist / 680;
+        const arcY = 44 * normDist * normDist - 44;
+
+        // 3D Tilt toward center beam
+        const rotateY = Math.max(-18, Math.min(18, dist * 0.055));
+
+        // Proximity scale
+        const proximity = Math.max(0, 1 - Math.abs(dist) / 380);
+        const scale = 0.86 + proximity * 0.18;
+
+        // Center cards always overlap outer cards
+        el.style.zIndex = `${Math.round(proximity * 25) + 1}`;
+
+        // Hardware-accelerated 3D transform
+        el.style.transform = `translate3d(${left}px, ${BASE_Y + arcY}px, 0) perspective(900px) rotateY(${rotateY}deg) scale(${scale})`;
+
+        // Dynamic Color Reveal:
+        // Left of beam (dist < -70) = Black & White + Halftone dot matrix
+        // Transition zone (-70 to +70) = Crossfade
+        // Right of beam (dist > +70) = Full Color
+        const colourT = Math.min(1, Math.max(0, (dist + 70) / 140));
+        const bwOverlay = el.querySelector(".bw-overlay") as HTMLElement | null;
+        const halftoneOverlay = el.querySelector(".halftone-overlay") as HTMLElement | null;
+        const beamGlow = el.querySelector(".beam-glow") as HTMLElement | null;
+
+        if (bwOverlay) {
+          bwOverlay.style.opacity = `${Math.max(0, 1 - colourT) * 0.98}`;
+        }
+        if (halftoneOverlay) {
+          halftoneOverlay.style.opacity = `${Math.max(0, 1 - colourT) * 0.55}`;
+        }
+        if (beamGlow) {
+          const glowAlpha = Math.abs(dist) < 140 ? 0.3 * (1 - Math.abs(dist) / 140) : 0;
+          beamGlow.style.opacity = `${glowAlpha}`;
+          beamGlow.style.background = `linear-gradient(${dist < 0 ? "270deg" : "90deg"}, transparent 60%, rgba(74,156,82,0.85) 100%)`;
+        }
+      });
+
+      animId = requestAnimationFrame(loop);
+    };
+
+    animId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animId);
+  }, []);
 
   return (
     <section
       ref={containerRef}
-      className="relative w-full min-h-screen overflow-hidden flex flex-col select-none"
-      style={{ background: "#080E08" }}
+      className="relative w-full overflow-hidden flex flex-col select-none"
+      style={{ background: "#080E08", minHeight: "100vh" }}
     >
       {/* ── Ambient glow: green ─────────────────────────────────────────────── */}
       <div className="absolute inset-0 z-0 pointer-events-none">
         <div
           className="absolute"
           style={{
-            top: "-8%", left: "50%", transform: "translateX(-50%)",
-            width: "55vw", height: "55vh",
+            top: "-8%",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: "55vw",
+            height: "55vh",
             background: "radial-gradient(ellipse, rgba(31,80,31,0.28) 0%, transparent 70%)",
           }}
         />
@@ -194,24 +167,34 @@ export function PastureHero() {
         </Link>
 
         <nav className="hidden md:flex items-center gap-1 bg-white/5 backdrop-blur-xl border border-white/10 rounded-full px-5 py-2">
-          <Link href="/"       className="text-[11px] uppercase tracking-widest font-semibold text-white px-4 py-1.5 rounded-full bg-white/15">HOME</Link>
-          <Link href="#system" className="text-[11px] uppercase tracking-widest font-medium text-white/50 hover:text-white px-4 py-1.5 rounded-full hover:bg-white/10 transition-all">CAPABILITIES</Link>
-          <Link href="#work"   className="text-[11px] uppercase tracking-widest font-medium text-white/50 hover:text-white px-4 py-1.5 rounded-full hover:bg-white/10 transition-all">APPROACH</Link>
+          <Link href="/" className="text-[11px] uppercase tracking-widest font-semibold text-white px-4 py-1.5 rounded-full bg-white/15">
+            HOME
+          </Link>
+          <Link href="#system" className="text-[11px] uppercase tracking-widest font-medium text-white/50 hover:text-white px-4 py-1.5 rounded-full hover:bg-white/10 transition-all">
+            CAPABILITIES
+          </Link>
+          <Link href="#work" className="text-[11px] uppercase tracking-widest font-medium text-white/50 hover:text-white px-4 py-1.5 rounded-full hover:bg-white/10 transition-all">
+            APPROACH
+          </Link>
         </nav>
 
-        <Link href="/contact" className="inline-flex items-center gap-2 bg-[#E0533C] hover:bg-[#c94530] text-white px-5 py-2.5 rounded-full text-[11px] font-bold tracking-widest uppercase transition-all duration-300 shadow-lg hover:scale-105">
+        <Link
+          href="/contact"
+          className="inline-flex items-center gap-2 bg-[#E0533C] hover:bg-[#c94530] text-white px-5 py-2.5 rounded-full text-[11px] font-bold tracking-widest uppercase transition-all duration-300 shadow-lg hover:scale-105"
+        >
           OUTCOMES
         </Link>
       </div>
 
-      {/* ── Hero text ─────────────────────────────────────────────────────────── */}
-      <div className="relative z-20 flex flex-col items-center justify-center text-center px-6 pt-8 pb-2">
-        {/* Headline — original text */}
+      {/* ── Hero text & CTAs ──────────────────────────────────────────────────── */}
+      {/* pb-8 and mb-10/mb-16 create guaranteed negative space between buttons & slideshow */}
+      <div className="relative z-20 flex flex-col items-center justify-center text-center px-6 pt-6 sm:pt-10 pb-6 mb-8 sm:mb-12 md:mb-14">
         <h1
           className="font-display font-bold text-5xl sm:text-7xl md:text-[82px] tracking-[-0.04em] leading-[1.0] text-white max-w-4xl"
           style={{ animation: "heroFade 1s cubic-bezier(0.16,1,0.3,1) 0.1s both" }}
         >
-          Turn attention into<br />
+          Turn attention into
+          <br />
           <span
             style={{
               background: "linear-gradient(90deg, #ffffff 0%, #4a9c52 60%, #2D8B3A 100%)",
@@ -231,80 +214,148 @@ export function PastureHero() {
           operating systems that make better decisions — and keep improving.
         </p>
 
+        {/* CTA Buttons */}
         <div
           className="mt-7 flex items-center gap-4"
           style={{ animation: "heroFade 1s cubic-bezier(0.16,1,0.3,1) 0.5s both" }}
         >
-          <Link href="#work" className="text-[11px] font-semibold tracking-widest uppercase text-white/45 hover:text-white border-b border-white/20 hover:border-white pb-0.5 transition-all">
+          <Link
+            href="#work"
+            className="text-[11px] font-semibold tracking-widest uppercase text-white/45 hover:text-white border-b border-white/20 hover:border-white pb-0.5 transition-all"
+          >
             HOW WE WORK
           </Link>
-          <Link href="/contact" className="inline-flex items-center gap-2 bg-[#E0533C] hover:bg-[#c94530] text-white px-6 py-3 rounded-full text-[11px] font-bold tracking-widest uppercase transition-all duration-300 shadow-lg hover:scale-105">
+          <Link
+            href="/contact"
+            className="inline-flex items-center gap-2 bg-[#E0533C] hover:bg-[#c94530] text-white px-6 py-3 rounded-full text-[11px] font-bold tracking-widest uppercase transition-all duration-300 shadow-lg hover:scale-105"
+          >
             START A CONVERSATION <ArrowUpRight className="w-3.5 h-3.5" />
           </Link>
         </div>
       </div>
 
-      {/* ── Card gallery ─────────────────────────────────────────────────────── */}
-      {/*  flex-1 pushes this to consume remaining space → cards sit in middle  */}
+      {/* ── Negative Space & Card Gallery Container ─────────────────────────── */}
       <div
-        className="relative z-10 flex-1 flex items-center pt-12"
-        style={{ perspective: "1100px", perspectiveOrigin: "50% 100%", minHeight: 340 }}
+        className="relative z-10 w-full flex-1 flex flex-col justify-start overflow-hidden pb-8"
+        style={{ perspective: "1100px", perspectiveOrigin: "50% 100%", minHeight: 350 }}
       >
-        {/* Left fade */}
-        <div className="absolute top-0 left-0 bottom-0 w-40 z-20 pointer-events-none"
-          style={{ background: "linear-gradient(90deg, #080E08 0%, transparent 100%)" }} />
-        {/* Right fade */}
-        <div className="absolute top-0 right-0 bottom-0 w-40 z-20 pointer-events-none"
-          style={{ background: "linear-gradient(270deg, #080E08 0%, transparent 100%)" }} />
-        {/* Top fade */}
-        <div className="absolute top-0 left-0 right-0 h-12 z-20 pointer-events-none"
-          style={{ background: "linear-gradient(180deg, #080E08 0%, transparent 100%)" }} />
+        {/* Left & Right Edge Vignette Fades */}
+        <div
+          className="absolute top-0 left-0 bottom-0 w-44 z-20 pointer-events-none"
+          style={{ background: "linear-gradient(90deg, #080E08 0%, transparent 100%)" }}
+        />
+        <div
+          className="absolute top-0 right-0 bottom-0 w-44 z-20 pointer-events-none"
+          style={{ background: "linear-gradient(270deg, #080E08 0%, transparent 100%)" }}
+        />
 
-        {/* ── GREEN beam ── */}
+        {/* ── Central GREEN Beam ──────────────────────────────────────────────── */}
         <div
           className="absolute top-0 bottom-0 z-30 pointer-events-none"
           style={{
-            left:       beamX,
-            width:      2,
-            background: "linear-gradient(180deg, transparent 0%, rgba(74,156,82,0.8) 20%, rgba(100,200,110,1) 50%, rgba(74,156,82,0.8) 80%, transparent 100%)",
-            boxShadow:  "0 0 8px 4px rgba(74,156,82,0.55), 0 0 28px 10px rgba(31,80,31,0.3)",
+            left: beamX,
+            width: 2,
+            background:
+              "linear-gradient(180deg, transparent 0%, rgba(74,156,82,0.8) 20%, rgba(100,200,110,1) 50%, rgba(74,156,82,0.8) 80%, transparent 100%)",
+            boxShadow: "0 0 8px 4px rgba(74,156,82,0.55), 0 0 28px 10px rgba(31,80,31,0.3)",
           }}
         />
         {/* Horizontal lens flare at beam midpoint */}
         <div
           className="absolute z-30 pointer-events-none"
           style={{
-            left:   beamX - 70,
-            top:    "50%",
-            width:  140,
+            left: beamX - 70,
+            top: "45%",
+            width: 140,
             height: 2,
             background: "linear-gradient(90deg, transparent, rgba(120,220,130,0.45), transparent)",
             filter: "blur(2px)",
           }}
         />
 
-        {/* Card track */}
-        <div className="absolute inset-0 overflow-hidden">
-          {getCardPositions().map(({ card, left }, idx) => (
-            <GalleryCard key={`${card.id}-${idx}`} card={card} cardLeft={left} beamX={beamX} />
+        {/* ── Continuous Never-Ending Card Track ──────────────────────────────── */}
+        <div className="relative w-full h-[320px] overflow-hidden">
+          {SLOTS.map(({ slotIndex, card }) => (
+            <div
+              key={`card-slot-${slotIndex}`}
+              ref={(el) => {
+                cardRefs.current[slotIndex] = el;
+              }}
+              className="absolute top-0 overflow-hidden rounded-2xl shadow-2xl"
+              style={{
+                width: CARD_WIDTH,
+                height: CARD_HEIGHT,
+                willChange: "transform",
+                left: 0,
+                transform: "translate3d(-9999px, 0, 0)",
+              }}
+            >
+              {/* Vibrant Photo */}
+              <div className="absolute inset-0">
+                <Image
+                  src={card.img}
+                  alt={card.label}
+                  fill
+                  className="object-cover object-center"
+                  sizes="200px"
+                  priority={slotIndex < 8}
+                />
+              </div>
+
+              {/* B&W Desaturation Overlay */}
+              <div className="bw-overlay absolute inset-0 bg-black mix-blend-color pointer-events-none" />
+
+              {/* Halftone Dot Matrix Texture */}
+              <div
+                className="halftone-overlay absolute inset-0 pointer-events-none"
+                style={{
+                  backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.55) 1px, transparent 1px)",
+                  backgroundSize: "7px 7px",
+                }}
+              />
+
+              {/* Subtle Vignette Gradient */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/15 pointer-events-none" />
+
+              {/* Beam Glow Edge on Card Border */}
+              <div className="beam-glow absolute inset-0 pointer-events-none transition-opacity duration-75" />
+
+              {/* Card Tag & Label */}
+              <div className="absolute bottom-0 left-0 right-0 p-3.5 z-10">
+                <div className="text-[9px] font-mono text-white/50 uppercase tracking-widest mb-0.5">
+                  {card.tag}
+                </div>
+                <div className="text-[13px] font-semibold text-white leading-tight font-display">
+                  {card.label}
+                </div>
+              </div>
+            </div>
           ))}
         </div>
       </div>
 
       {/* ── Scroll hint ──────────────────────────────────────────────────────── */}
       <div
-        className="relative z-20 flex items-center justify-center pb-7 pt-3 gap-3"
+        className="relative z-20 flex items-center justify-center pb-6 pt-2 gap-3"
         style={{ animation: "heroFade 1s cubic-bezier(0.16,1,0.3,1) 0.9s both" }}
       >
-        <div className="w-px h-7 bg-gradient-to-b from-transparent to-white/15" />
-        <span className="text-[9px] font-mono text-white/20 uppercase tracking-widest">SCROLL TO EXPLORE</span>
-        <div className="w-px h-7 bg-gradient-to-b from-transparent to-white/15" />
+        <div className="w-px h-6 bg-gradient-to-b from-transparent to-white/15" />
+        <span className="text-[9px] font-mono text-white/20 uppercase tracking-widest">
+          SCROLL TO EXPLORE
+        </span>
+        <div className="w-px h-6 bg-gradient-to-b from-transparent to-white/15" />
       </div>
 
       <style jsx>{`
         @keyframes heroFade {
-          0%   { opacity: 0; transform: translateY(18px); }
-          100% { opacity: 1; transform: translateY(0); }
+          0% {
+            opacity: 0;
+            transform: translateY(18px);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0);
+          }
         }
       `}</style>
     </section>
