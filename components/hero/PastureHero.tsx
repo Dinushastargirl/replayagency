@@ -247,7 +247,7 @@ export function PastureHero() {
       {/* ── Card gallery ─────────────────────────────────────────────────────── */}
       {/*  flex-1 pushes this to consume remaining space → cards sit in middle  */}
       <div
-        className="relative z-10 flex-1 flex items-center"
+        className="relative z-10 flex-1 flex items-center pt-12"
         style={{ perspective: "1100px", perspectiveOrigin: "50% 100%", minHeight: 340 }}
       >
         {/* Left fade */}
